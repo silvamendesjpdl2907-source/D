@@ -1,0 +1,59 @@
+name: PC Virtual Windows (128GB Compact)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Otimizar Hardware e Energia
+        run: |
+          Set-ItemProperty -Path "HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0" -Name "~MHz" -Value 4500 -ErrorAction SilentlyContinue
+          powercfg -setactive e9a42b02-d5df-448d-aa00-03f14749eb61
+          powercfg -change -monitor-timeout-ac 0
+          powercfg -change -standby-timeout-ac 0
+
+      - name: Configurar RDP e Admin
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -value 1
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          $Password = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+          New-LocalUser -Name "runneradmin" -Password $Password -FullName "Admin" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "runneradmin" -ErrorAction SilentlyContinue
+
+      - name: Instalar Tailscale e Conectar
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          $msi = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $msi -UseBasicParsing
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$env:TAILSCALE_AUTH_KEY" --hostname="pc128gb" --unattended
+          Start-Sleep -Seconds 10
+          $tsIP = (& "C:\Program Files\Tailscale\tailscale.exe" ip -4).Trim()
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Instalar Chrome e 7-Zip
+        run: |
+          $chrome = "$env:TEMP\chrome.exe"
+          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile $chrome -UseBasicParsing
+          Start-Process -FilePath $chrome -ArgumentList "/silent /install" -Wait
+          $zip = "$env:TEMP\7z.exe"
+          Invoke-WebRequest -Uri "https://www.7-zip.org/a/7z2409-x64.exe" -OutFile $zip -UseBasicParsing
+          Start-Process -FilePath $zip -ArgumentList "/S" -Wait
+
+      - name: Painel de Conexao
+        run: |
+          Write-Host "===================================="
+          Write-Host " IP: $env:TAILSCALE_IP"
+          Write-Host " Usuario: runneradmin"
+          Write-Host " Senha: P@ssw0rd!"
+          Write-Host "===================================="
+
+      - name: Keep-Alive
+        run: |
+          while ($true) { Start-Sleep -Seconds 120 }
